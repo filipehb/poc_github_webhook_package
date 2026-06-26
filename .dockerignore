@@ -1,0 +1,7 @@
+node_modules
+.env
+.git
+.github
+deploy
+README.md
+npm-debug.log*
