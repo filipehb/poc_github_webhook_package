@@ -85,8 +85,8 @@ In your repository: **Settings → Webhooks → Add webhook**
 
 | Field | Value |
 |-------|-------|
-| Payload URL | `https://YOUR_DOMAIN/webhook/github` |
-| Content type | `application/json` |
+| Payload URL | `https://YOUR_DOMAIN/webhook/github` (must include `/webhook/github`) |
+| Content type | `application/json` (form-urlencoded also supported) |
 | Secret | Same value as `WEBHOOK_SECRET` in `.env` |
 | Events | Select **Package** (published / updated) |
 | Active | Yes |
@@ -222,4 +222,5 @@ You should see a `package` event and deploy script output.
 | 401 Invalid signature | Secret mismatch or body parsed before verification |
 | Package event ignored | Filters in `.env`? Is `package_type` `container`? |
 | Docker pull fails | `docker login ghcr.io` on VPS? PAT has `read:packages`? |
+| `no matching manifest for linux/arm64` on Mac | Re-run publish workflow (multi-arch build), or set `DOCKER_PLATFORM=linux/amd64` in `.env` for local testing |
 | Deploy script fails | `COMPOSE_FILE` or `CONTAINER_NAME` set? User in `docker` group? |
