@@ -10,6 +10,8 @@ function getConfig() {
     packageName: process.env.PACKAGE_NAME || '',
     imageTag: process.env.IMAGE_TAG || '',
     composeFile: process.env.COMPOSE_FILE || '',
+    composeCwd: process.env.COMPOSE_CWD || '',
+    composeService: process.env.COMPOSE_SERVICE || '',
     containerName: process.env.CONTAINER_NAME || '',
   };
 }
@@ -61,20 +63,26 @@ function getPackageTag(pkg) {
 }
 
 function buildImageRef(owner, name, tag) {
-  return `ghcr.io/${owner}/${name}:${tag}`;
+  return `ghcr.io/${owner.toLowerCase()}/${name.toLowerCase()}:${tag}`;
 }
 
-function matchesFilter(value, filter) {
+function matchesFilter(value, filter, { ignoreCase = false } = {}) {
   if (!filter) {
     return true;
   }
 
+  const left = ignoreCase ? String(value).toLowerCase() : value;
+  const right = ignoreCase ? String(filter).toLowerCase() : filter;
+
   if (filter.includes('*')) {
-    const pattern = new RegExp(`^${filter.replace(/\*/g, '.*')}$`);
+    const pattern = new RegExp(
+      `^${right.replace(/\*/g, '.*')}$`,
+      ignoreCase ? 'i' : ''
+    );
     return pattern.test(value);
   }
 
-  return value === filter;
+  return left === right;
 }
 
 function shouldDeploy(payload) {
@@ -116,11 +124,11 @@ function shouldDeploy(payload) {
     };
   }
 
-  if (!matchesFilter(owner, config.packageOwner)) {
+  if (!matchesFilter(owner, config.packageOwner, { ignoreCase: true })) {
     return { deploy: false, reason: `Owner ${owner} does not match filter` };
   }
 
-  if (!matchesFilter(name, config.packageName)) {
+  if (!matchesFilter(name, config.packageName, { ignoreCase: true })) {
     return { deploy: false, reason: `Package ${name} does not match filter` };
   }
 
@@ -145,6 +153,8 @@ function runDeployScript(image) {
     ...process.env,
     IMAGE: image,
     COMPOSE_FILE: config.composeFile,
+    COMPOSE_CWD: config.composeCwd,
+    COMPOSE_SERVICE: config.composeService,
     CONTAINER_NAME: config.containerName,
   };
 

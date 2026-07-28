@@ -1,226 +1,163 @@
-# GitHub Package Webhook Listener
+# GitHub Package Webhook — deploy do checkin-discord-bot-v1
 
-A small Node.js service that listens for GitHub **Package** webhook events and automatically pulls a new container image from GHCR and redeploys your app on a DigitalOcean VPS.
+Listener Node.js que recebe webhooks **Package** / **registry_package** do GitHub e atualiza o bot na DigitalOcean via `docker compose pull app`.
 
-## How it works
+## Arquitetura
 
-1. GitHub sends a POST request to your VPS when a package is published or updated.
-2. The listener verifies the `X-Hub-Signature-256` header.
-3. For container packages matching your filters, it runs `scripts/deploy-container.sh` to `docker pull` and restart your stack.
-
-Supported webhook events: `package` (recommended) and legacy `registry_package`.
-
-## Project layout
-
-```
-src/server.js              Express app and webhook route
-src/verifySignature.js     HMAC SHA-256 verification
-src/handlePackageEvent.js  Package event filtering and deploy trigger
-scripts/deploy-container.sh Docker pull + compose up / restart
-deploy/webhook.service     systemd unit template
-deploy/nginx-site.conf     Nginx reverse proxy template
-Dockerfile                 Sample app image published to GHCR
-.github/workflows/publish-package.yml  Triggers package webhook
-docker-compose.example.yml Example stack for the VPS
+```mermaid
+flowchart LR
+    Tag["git tag 1.0.0 na main"] --> CI["docker-publish.yml"]
+    CI --> GHCR["ghcr.io/.../checkin-discord-bot-v1:latest"]
+    GHCR --> WH["Webhook GitHub"]
+    WH --> Node["poc_github_webhook_package :3000"]
+    Node --> Deploy["compose pull + recreate app"]
+    Deploy --> Bot["node_app + MariaDB"]
 ```
 
-## Trigger a Package webhook event
+| Repositório | Papel |
+|-------------|--------|
+| [checkin-discord-bot-v1](https://github.com/Coletivo-Popular-Design-Desenvolvimento/checkin-discord-bot-v1) | App + GHCR publish (`docker-publish.yml`) |
+| **poc_github_webhook_package** (este) | Webhook listener na droplet |
 
-Publishing a container image to GHCR from this repo triggers the **Package** webhook (`published` / `updated`).
+## Publicar imagem no GHCR (repo do bot)
 
-This repo includes:
-
-- `Dockerfile` — minimal nginx sample app
-- `.github/workflows/publish-package.yml` — builds and pushes `ghcr.io/filipehb/my-app:latest`
-
-### One-time: make the GHCR package public (optional)
-
-After the first publish, go to **GitHub → Your profile → Packages → my-app → Package settings** and set visibility if you need public pulls without auth.
-
-For a private VPS deploy, keep the package private and use `docker login ghcr.io` on the VPS instead.
-
-### Run the publish workflow
-
-1. Commit and push these files to `main`, **or**
-2. In GitHub: **Actions → Publish container package → Run workflow**
-
-The workflow pushes:
-
-```
-ghcr.io/filipehb/my-app:latest
-```
-
-That matches the default filters in `.env.example` (`PACKAGE_OWNER`, `PACKAGE_NAME`, `IMAGE_TAG`).
-
-### Verify the webhook fired
-
-1. **Settings → Webhooks → Recent Deliveries** — look for a `package` event with response `200`
-2. Webhook listener logs — `[package] Triggering deploy for ghcr.io/filipehb/my-app:latest`
-3. If using ngrok locally, keep `npm start` running while the workflow completes
-
-### Manual trigger from your machine (alternative)
+No `checkin-discord-bot-v1`, o workflow `.github/workflows/docker-publish.yml` publica quando você cria uma **tag semver** em commit da `main` ou `homol`:
 
 ```bash
-docker build -t ghcr.io/filipehb/my-app:latest .
-echo "$GHCR_TOKEN" | docker login ghcr.io -u filipehb --password-stdin
-docker push ghcr.io/filipehb/my-app:latest
+git tag 1.0.0
+git push origin 1.0.0
 ```
 
-Use a PAT with `write:packages` scope. Pushing from your machine also triggers the webhook if the package is linked to this repository.
+| Branch | Tags publicadas |
+|--------|-----------------|
+| `main` | `1.0.0` + `latest` |
+| `homol` | `1.0.0-homol` + `homol` |
 
-## Local development
+Imagem:
 
-```bash
-npm install
-cp .env.example .env
-# Edit .env and set WEBHOOK_SECRET
-npm start
+```
+ghcr.io/coletivo-popular-design-desenvolvimento/checkin-discord-bot-v1:latest
 ```
 
-Health check: `GET http://localhost:3000/health`
+## Webhook no GitHub
 
-## GitHub webhook setup
+Configure em **checkin-discord-bot-v1 → Settings → Webhooks**:
 
-In your repository: **Settings → Webhooks → Add webhook**
+| Campo | Valor |
+|-------|--------|
+| Payload URL | `https://SEU_DOMINIO/webhook/github` |
+| Content type | `application/json` |
+| Secret | igual ao `WEBHOOK_SECRET` |
+| Events | **Package** ou **Registry packages** |
 
-| Field | Value |
-|-------|-------|
-| Payload URL | `https://YOUR_DOMAIN/webhook/github` (must include `/webhook/github`) |
-| Content type | `application/json` (form-urlencoded also supported) |
-| Secret | Same value as `WEBHOOK_SECRET` in `.env` |
-| Events | Select **Package** (published / updated) |
-| Active | Yes |
+## Variáveis — webhook listener (`.env`)
 
-After saving, GitHub sends a **ping** event. Your server must return HTTP 200.
+```env
+WEBHOOK_SECRET=...
+PACKAGE_OWNER=Coletivo-Popular-Design-Desenvolvimento
+PACKAGE_NAME=checkin-discord-bot-v1
+IMAGE_TAG=latest
 
-Docs: [Creating webhooks](https://docs.github.com/en/webhooks/using-webhooks/creating-webhooks)
+COMPOSE_CWD=/opt/checkin-discord-bot-v1/deploy
+COMPOSE_SERVICE=app
+```
 
-## Environment variables
+| Variável | Descrição |
+|----------|-----------|
+| `COMPOSE_CWD` | Pasta do `docker-compose.yml` do bot |
+| `COMPOSE_SERVICE` | Serviço a atualizar (`app` — só o bot, não o banco) |
+| `IMAGE_TAG` | `latest` (prod) ou `homol` (homologação) |
 
-Copy `.env.example` to `.env` on your VPS:
+## Setup na DigitalOcean (passo a passo)
 
-| Variable | Description |
-|----------|-------------|
-| `PORT` | Local port (default `3000`) |
-| `WEBHOOK_SECRET` | GitHub webhook secret |
-| `PACKAGE_OWNER` | Optional filter, e.g. `filipehb` |
-| `PACKAGE_NAME` | Optional filter, e.g. `my-app` |
-| `IMAGE_TAG` | Optional filter, e.g. `latest` or `v*` |
-| `COMPOSE_FILE` | Path to docker-compose file for redeploy |
-| `CONTAINER_NAME` | Alternative to compose: restart this container |
-| `GHCR_USERNAME` | For `docker login ghcr.io` on the VPS |
-| `GHCR_TOKEN` | PAT with `read:packages` (VPS only, not used by Node) |
-
-Leave filter variables empty to accept any container package event.
-
-## DigitalOcean VPS deployment
-
-### 1. Install prerequisites
-
-On Ubuntu 22.04+:
+### 1. Instalar dependências
 
 ```bash
 sudo apt update
-sudo apt install -y nginx certbot python3-certbot-nginx
+sudo apt install -y nginx certbot python3-certbot-nginx git
 curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
 sudo apt install -y nodejs docker.io docker-compose-plugin
 ```
 
-Point your domain's DNS A record to the droplet IP.
-
-### 2. GHCR login
-
-Create a fine-grained PAT with **read access to packages**, then on the VPS:
+### 2. Clonar o bot e configurar
 
 ```bash
-echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USERNAME" --password-stdin
+sudo mkdir -p /opt/checkin-discord-bot-v1
+sudo git clone https://github.com/Coletivo-Popular-Design-Desenvolvimento/checkin-discord-bot-v1.git /opt/checkin-discord-bot-v1
+
+# Secrets do bot (TOKEN_BOT, DB_*, DATABASE_URL)
+sudo nano /opt/checkin-discord-bot-v1/.env
+
+# Compose + imagem GHCR
+sudo cp /opt/github-webhook/deploy/checkin-discord-bot.compose.yml /opt/checkin-discord-bot-v1/deploy/docker-compose.yml
+sudo cp /opt/github-webhook/deploy/checkin-discord-bot.env.example /opt/checkin-discord-bot-v1/deploy/.env
+sudo nano /opt/checkin-discord-bot-v1/deploy/.env
 ```
 
-### 3. Deploy the webhook service
+Primeira subida:
 
 ```bash
-sudo useradd --system --home /opt/github-webhook --shell /usr/sbin/nologin webhook || true
-sudo mkdir -p /opt/github-webhook
-sudo chown webhook:webhook /opt/github-webhook
+cd /opt/checkin-discord-bot-v1/deploy
+sudo docker compose up -d
+```
 
-git clone git@github.com:filipehb/poc_github_webhook_package.git /opt/github-webhook
+Package **público** no GHCR: não precisa `docker login`. **Privado:** `echo "$TOKEN" | docker login ghcr.io -u USER --password-stdin`.
+
+### 3. Instalar o webhook listener
+
+```bash
+sudo git clone https://github.com/filipehb/poc_github_webhook_package.git /opt/github-webhook
 cd /opt/github-webhook
-npm ci
-cp .env.example .env
-# Edit .env with your secrets and filters
-chmod +x scripts/deploy-container.sh
-```
+sudo npm ci
+sudo cp .env.example .env
+sudo nano .env
+sudo chmod +x scripts/deploy-container.sh
 
-Add the webhook user to the docker group if it needs to run Docker:
-
-```bash
+sudo useradd --system --home /opt/github-webhook --shell /usr/sbin/nologin webhook || true
 sudo usermod -aG docker webhook
-```
+sudo chown -R webhook:webhook /opt/github-webhook
 
-Install and start systemd service:
-
-```bash
 sudo cp deploy/webhook.service /etc/systemd/system/github-webhook.service
 sudo systemctl daemon-reload
 sudo systemctl enable --now github-webhook
-sudo systemctl status github-webhook
 ```
 
-### 4. Nginx and TLS
+### 4. Nginx + HTTPS
 
 ```bash
 sudo cp deploy/nginx-site.conf /etc/nginx/sites-available/github-webhook
-sudo ln -s /etc/nginx/sites-available/github-webhook /etc/nginx/sites-enabled/
-# Edit server_name in the config first
+# Edite server_name
+sudo ln -sf /etc/nginx/sites-available/github-webhook /etc/nginx/sites-enabled/
 sudo nginx -t && sudo systemctl reload nginx
-sudo certbot --nginx -d your-domain.com
+sudo certbot --nginx -d seu-dominio.com
 ```
 
-### 5. Firewall
+### 5. Testar
 
 ```bash
-sudo ufw allow OpenSSH
-sudo ufw allow 'Nginx Full'
-sudo ufw enable
+curl https://seu-dominio.com/health
+sudo journalctl -u github-webhook -f
 ```
 
-Do not expose port 3000 publicly; only Nginx should proxy to it.
+Publique uma tag no bot → webhook → logs devem mostrar `Triggering deploy for ghcr.io/.../checkin-discord-bot-v1:latest`.
 
-## Testing
-
-### Test with ngrok (before VPS is ready)
+## Desenvolvimento local
 
 ```bash
+npm install
+cp .env.example .env
 npm start
 ngrok http 3000
 ```
 
-Use the ngrok HTTPS URL as the GitHub webhook Payload URL. Confirm the **ping** delivery succeeds in GitHub webhook settings.
+## Estrutura deste repo
 
-### Test a real package publish
-
-Push a new container image tag to GHCR linked to your repo. Check VPS logs:
-
-```bash
-sudo journalctl -u github-webhook -f
 ```
-
-You should see a `package` event and deploy script output.
-
-## Security notes
-
-- Always verify `X-Hub-Signature-256` (implemented in `src/verifySignature.js`).
-- Never commit `.env` or tokens.
-- Run the service as a non-root user.
-- Signature verification is the primary guard; optionally add GitHub IP allow lists in Nginx.
-
-## Troubleshooting
-
-| Issue | Check |
-|-------|-------|
-| Webhook ping fails | HTTPS reachable? Nginx proxy correct? `WEBHOOK_SECRET` matches GitHub? |
-| 401 Invalid signature | Secret mismatch or body parsed before verification |
-| Package event ignored | Filters in `.env`? Is `package_type` `container`? |
-| Docker pull fails | `docker login ghcr.io` on VPS? PAT has `read:packages`? |
-| `no matching manifest for linux/arm64` on Mac | Re-run publish workflow (multi-arch build), or set `DOCKER_PLATFORM=linux/amd64` in `.env` for local testing |
-| Deploy script fails | `COMPOSE_FILE` or `CONTAINER_NAME` set? User in `docker` group? |
+src/                          Webhook listener Node.js
+scripts/deploy-container.sh   pull + compose recreate (servico app)
+deploy/
+  webhook.service             systemd
+  nginx-site.conf             reverse proxy
+  checkin-discord-bot.compose.yml   template compose prod (bot + db)
+  checkin-discord-bot.env.example   template deploy/.env (DOCKER_IMAGE)
+```

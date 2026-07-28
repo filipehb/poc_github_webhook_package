@@ -1,0 +1,16 @@
+[Unit]
+Description=GitHub Package Webhook Listener
+After=network.target
+
+[Service]
+Type=simple
+User=webhook
+Group=webhook
+WorkingDirectory=/opt/github-webhook
+EnvironmentFile=/opt/github-webhook/.env
+ExecStart=/usr/bin/node /opt/github-webhook/src/server.js
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
