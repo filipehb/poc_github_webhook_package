@@ -5,6 +5,7 @@ const { verifySignature } = require('./verifySignature');
 const { handlePackageEvent } = require('./handlePackageEvent');
 
 const PORT = Number(process.env.PORT) || 3000;
+const HOST = process.env.HOST || '127.0.0.1';
 const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || '';
 
 const app = express();
@@ -66,8 +67,8 @@ function handleWebhook(req, res) {
     return res.status(200).json({ ok: true, ...result });
   }
 
-    return res.status(200).json({ ok: true, ignored: true, event });
-  }
+  return res.status(200).json({ ok: true, ignored: true, event });
+}
 
 app.post(
   '/webhook/github',
@@ -77,7 +78,7 @@ app.post(
   handleWebhook
 );
 
-app.listen(PORT, () => {
-  console.log(`Webhook listener running on port ${PORT}`);
-  console.log(`Webhook URL path: POST /webhook/github`);
+app.listen(PORT, HOST, () => {
+  console.log(`Webhook listener running on ${HOST}:${PORT}`);
+  console.log('Webhook URL path: POST /webhook/github');
 });

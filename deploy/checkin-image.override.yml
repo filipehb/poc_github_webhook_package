@@ -1,0 +1,7 @@
+# Junta com o compose.yml da raiz do checkin-discord-bot-v1.
+# Não substitui esse arquivo: só troca o build local pela imagem do GHCR.
+# O compose.override.yml de desenvolvimento não entra nesse comando.
+
+services:
+  app:
+    image: ${DOCKER_IMAGE:?Defina DOCKER_IMAGE}

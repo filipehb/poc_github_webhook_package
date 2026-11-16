@@ -1,4 +1,5 @@
 const { spawn } = require('child_process');
+const fs = require('fs');
 const path = require('path');
 
 const DEPLOY_ACTIONS = new Set(['published', 'updated']);
@@ -13,6 +14,8 @@ function getConfig() {
     composeCwd: process.env.COMPOSE_CWD || '',
     composeService: process.env.COMPOSE_SERVICE || '',
     containerName: process.env.CONTAINER_NAME || '',
+    botDir: process.env.BOT_DIR || '',
+    botEnvFile: process.env.BOT_ENV_FILE || '',
   };
 }
 
@@ -156,32 +159,51 @@ function runDeployScript(image) {
     COMPOSE_CWD: config.composeCwd,
     COMPOSE_SERVICE: config.composeService,
     CONTAINER_NAME: config.containerName,
+    BOT_DIR: config.botDir,
+    BOT_ENV_FILE: config.botEnvFile,
   };
+
+  const logPath = path.join(__dirname, '..', 'logs', 'deploy.log');
+  let logFd = null;
+
+  try {
+    fs.mkdirSync(path.dirname(logPath), { recursive: true });
+    fs.appendFileSync(
+      logPath,
+      `\n[deploy] ${new Date().toISOString()} starting ${image}\n`
+    );
+    logFd = fs.openSync(logPath, 'a');
+  } catch (error) {
+    console.error('[deploy] Could not open log file:', error.message);
+  }
 
   const child = spawn('bash', [scriptPath], {
     env,
     detached: true,
-    stdio: ['ignore', 'pipe', 'pipe'],
+    stdio: logFd ? ['ignore', logFd, logFd] : ['ignore', 'pipe', 'pipe'],
   });
 
-  child.stdout.on('data', (data) => {
-    process.stdout.write(`[deploy] ${data}`);
-  });
-
-  child.stderr.on('data', (data) => {
-    process.stderr.write(`[deploy] ${data}`);
-  });
+  if (logFd) {
+    fs.closeSync(logFd);
+    console.log(`[deploy] Logs: ${logPath}`);
+  } else {
+    child.stdout.on('data', (data) => {
+      process.stdout.write(`[deploy] ${data}`);
+    });
+    child.stderr.on('data', (data) => {
+      process.stderr.write(`[deploy] ${data}`);
+    });
+    child.on('close', (code) => {
+      if (code === 0) {
+        console.log(`[deploy] Completed successfully for ${image}`);
+      } else {
+        console.error(`[deploy] Exited with code ${code} for ${image}`);
+      }
+    });
+  }
 
   child.on('error', (error) => {
     console.error('[deploy] Failed to start deploy script:', error.message);
-  });
-
-  child.on('close', (code) => {
-    if (code === 0) {
-      console.log(`[deploy] Completed successfully for ${image}`);
-    } else {
-      console.error(`[deploy] Exited with code ${code} for ${image}`);
-    }
   });
 
   child.unref();

@@ -1,12 +1,17 @@
 [Unit]
 Description=GitHub Package Webhook Listener
-After=network.target
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
 
 [Service]
 Type=simple
 User=webhook
 Group=webhook
+SupplementaryGroups=docker
 WorkingDirectory=/opt/github-webhook
+Environment=HOME=/opt/github-webhook
+Environment=HOST=127.0.0.1
 EnvironmentFile=/opt/github-webhook/.env
 ExecStart=/usr/bin/node /opt/github-webhook/src/server.js
 Restart=on-failure
